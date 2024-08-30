@@ -5,12 +5,16 @@ import re
 import requests
 import random
 
+from dotenv import load_dotenv
 from requests_oauthlib import OAuth2Session
 from flask import Flask, request, redirect, session, render_template
 
 class Config:
     SCHEDULER_API_ENABLED = True
 
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(50)
