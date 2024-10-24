@@ -53,6 +53,14 @@ def post_tweet(payload, token):
             "Content-Type": "application/json",
         },
     )
+def get_user_id(token):
+    return requests.get(
+        "https://api.twitter.com/2/users/me",
+        headers={
+            "Authorization": f"Bearer {token['access_token']}",
+            "Content-Type": "application/json",
+        },
+    )
 
 # Route for the homepage
 @app.route("/")
@@ -60,7 +68,14 @@ def homepage():
     # Check if the user has an active session
     if "oauth_token" in session:
         logging.debug("User is logged in :)")
-        return render_template("homepage.html")  # Display homepage if session exists
+        token = session["oauth_token"]
+
+        response = get_user_id(token)
+        data = response.json().get("data", {})
+        user_id = data.get("id", "No id found")
+        name = data.get("name", "No name found")
+        username = data.get("username", "No username found")
+        return render_template("homepage.html", user_id=user_id, name=name, username=username)  # Display homepage if session exists
     else:
         return render_template("index.html")  # Render index.html if no session
 
