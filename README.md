@@ -9,7 +9,8 @@
 - See if this is the API that will allow us to figure out what account we want to comment against
 
 ## How to run this app
-python3 -m venv venv
+virtualenv -m venv venv
+source ./venv/bin/activate
 pip install -r requirements.txt
 python3 server.py
 
