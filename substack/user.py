@@ -23,8 +23,8 @@ def get_user_notes(user_id: int):
     # Get notes
     all_reactions = []
     # Get note reaction count
-    filtered_notes = [note["comment"]["reaction_count"] for note in notes if note["type"] == "comment"]
-    all_reactions.extend(filtered_notes)
+    note_reaction_count = [note["comment"]["reaction_count"] for note in notes if note["type"] == "comment"]
+    all_reactions.extend(note_reaction_count)
     endpoint_with_cursor = f"https://substack.com/api/v1/reader/feed/profile/{user_id}?cursor={next_cursor}"
     next_page_response = requests.get(endpoint_with_cursor, headers=HEADERS, timeout=30)
 
@@ -33,7 +33,7 @@ def get_user_notes(user_id: int):
     next_cursor = r.json()["nextCursor"]
     
     notes = next_page_response.json()["items"]
-    filtered_notes = [note["comment"]["reaction_count"] for note in notes if note["type"] == "comment"]
-    all_reactions.extend(filtered_notes)
+    note_reaction_count = [note["comment"]["reaction_count"] for note in notes if note["type"] == "comment"]
+    all_reactions.extend(note_reaction_count)
 
     return all_reactions
