@@ -27,6 +27,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuthStatus = async () => {
     try {
+      // Check for sync token in URL first
+      const urlParams = new URLSearchParams(window.location.search);
+      const syncToken = urlParams.get('sync');
+      
+      if (syncToken) {
+        console.log('Found sync token, syncing session...');
+        try {
+          await api.post('/auth/sync', { syncToken });
+          console.log('Session synced successfully');
+          // Remove sync token from URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (syncError) {
+          console.error('Session sync failed:', syncError);
+        }
+      }
+
       console.log('Checking authentication status...');
       const response = await api.get('/auth/status');
       console.log('Auth status response:', response.data);

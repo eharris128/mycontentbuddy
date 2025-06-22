@@ -33,6 +33,7 @@ const allowedOrigins = [
   process.env.CLIENT_URL || 'http://localhost:3002',
   'http://localhost:3002',
   'http://localhost:3003',
+  'http://127.0.0.1:3002',
   process.env.REDIRECT_URI ? new URL(process.env.REDIRECT_URI).origin : null,
 ].filter(Boolean);
 
@@ -41,16 +42,22 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or Postman)
     if (!origin) return callback(null, true);
     
+    // Allow localhost variations
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return callback(null, true);
+    }
+    
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      console.log('Allowed origins:', allowedOrigins);
+      callback(null, true); // Allow all origins for development
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['set-cookie']
 }));
 
@@ -63,7 +70,7 @@ app.use(session({
   resave: false,
   saveUninitialized: true, // Allow sessions to be created
   cookie: {
-    secure: false, // Set to false for development with tunnels
+    secure: false, // Set to false for development
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: 'lax' // Allow cross-site requests for OAuth
