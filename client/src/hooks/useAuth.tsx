@@ -65,8 +65,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchUser = async () => {
     try {
       const response = await api.get('/auth/user');
-      console.log('User data response:', response.data);
-      setUser(response.data.data);
+      console.log('User auth response:', response.data);
+      
+      // The new /auth/user endpoint just returns auth status, not user data
+      // Set a placeholder user object to indicate authentication
+      if (response.data.authenticated) {
+        setUser({ id: 'authenticated', name: 'Authenticated User', username: 'user' });
+      } else {
+        setUser(null);
+      }
     } catch (error) {
       console.error('Fetch user failed:', error);
       setUser(null);

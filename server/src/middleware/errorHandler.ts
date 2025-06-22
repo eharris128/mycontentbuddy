@@ -18,14 +18,19 @@ export function handleTwitterError(error: any, req: Request, res: Response, next
   if (error.code === 429) {
     const resetTime = error.rateLimit?.reset ? new Date(error.rateLimit.reset * 1000) : null;
     const resetTimeString = resetTime ? resetTime.toISOString() : 'unknown';
+    const waitTimeSeconds = error.rateLimit?.reset ? 
+      Math.max(0, error.rateLimit.reset - Math.floor(Date.now() / 1000)) : 0;
     
     return res.status(429).json({
       error: 'Rate limit exceeded',
-      message: 'Too many requests to Twitter API. Please try again later.',
+      message: `Too many requests to Twitter API. Please try again in ${waitTimeSeconds} seconds.`,
       rateLimitReset: resetTimeString,
+      waitTimeSeconds,
+      isFromCache: false, // Indicates this is a fresh rate limit error
       details: {
         remaining: error.rateLimit?.remaining || 0,
-        limit: error.rateLimit?.limit || 0
+        limit: error.rateLimit?.limit || 0,
+        reset: error.rateLimit?.reset || 0
       }
     });
   }

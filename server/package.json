@@ -9,6 +9,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@twitter-api-v2/plugin-cache-redis": "^1.0.3",
     "axios": "^1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -16,6 +17,7 @@
     "express-session": "^1.17.3",
     "passport": "^0.7.0",
     "passport-twitter": "^1.0.4",
+    "redis": "^4.7.1",
     "twitter-api-v2": "^1.23.2"
   },
   "devDependencies": {

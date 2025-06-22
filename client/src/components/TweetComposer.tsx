@@ -112,7 +112,10 @@ const TweetComposer: React.FC<TweetComposerProps> = ({ onTweetPosted }) => {
           color: '#155724',
           fontSize: '14px'
         }}>
-          ✅ Tweet posted successfully!
+          ✅ Tweet posted successfully! 
+          <div style={{ fontSize: '12px', marginTop: '4px' }}>
+            💡 Refresh your timeline below to see it appear
+          </div>
         </div>
       )}
 

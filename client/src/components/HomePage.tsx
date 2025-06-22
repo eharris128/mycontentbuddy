@@ -104,8 +104,8 @@ const HomePage: React.FC = () => {
         {/* Right Column - Tweet Composer */}
         <div>
           <TweetComposer onTweetPosted={() => {
-            // Refresh timeline when a new tweet is posted
-            window.location.reload();
+            // Tweet posted successfully - timeline will need manual refresh
+            console.log('Tweet posted! Timeline can be refreshed manually.');
           }} />
         </div>
       </div>

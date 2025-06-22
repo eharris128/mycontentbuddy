@@ -8,6 +8,7 @@ import session from 'express-session';
 import cors from 'cors';
 import authRoutes from './routes/auth';
 import apiRoutes from './routes/api';
+import redisService from './services/redis';
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -95,18 +96,48 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+// Initialize Redis connection
+async function startServer() {
+  console.log('🚀 Initializing server...');
   
-  // Log OAuth configuration status (without exposing secrets)
-  console.log('OAuth Configuration Status:');
-  console.log(`  CLIENT_ID: ${process.env.CLIENT_ID ? '✓ Set' : '✗ Missing'}`);
-  console.log(`  CLIENT_SECRET: ${process.env.CLIENT_SECRET ? '✓ Set' : '✗ Missing'}`);
-  console.log(`  REDIRECT_URI: ${process.env.REDIRECT_URI || 'Not set (using default)'}`);
-  console.log(`  CLIENT_URL: ${process.env.CLIENT_URL || 'Not set (using default)'}`);
+  // Connect to Redis first
+  await redisService.connect();
   
-  // Log CORS configuration
-  console.log('\nCORS Allowed Origins:');
-  allowedOrigins.forEach(origin => console.log(`  - ${origin}`));
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    
+    // Log Redis status
+    console.log(`Redis: ${redisService.isRedisConnected() ? '✅ Connected' : '⚠️ Not connected'}`);
+    
+    // Log OAuth configuration status (without exposing secrets)
+    console.log('\nOAuth Configuration Status:');
+    console.log(`  CLIENT_ID: ${process.env.CLIENT_ID ? '✓ Set' : '✗ Missing'}`);
+    console.log(`  CLIENT_SECRET: ${process.env.CLIENT_SECRET ? '✓ Set' : '✗ Missing'}`);
+    console.log(`  REDIRECT_URI: ${process.env.REDIRECT_URI || 'Not set (using default)'}`);
+    console.log(`  CLIENT_URL: ${process.env.CLIENT_URL || 'Not set (using default)'}`);
+    
+    // Log CORS configuration
+    console.log('\nCORS Allowed Origins:');
+    allowedOrigins.forEach(origin => console.log(`  - ${origin}`));
+  });
+}
+
+// Start the server
+startServer().catch(error => {
+  console.error('❌ Failed to start server:', error);
+  process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Graceful shutdown initiated...');
+  await redisService.disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Graceful shutdown initiated...');
+  await redisService.disconnect();
+  process.exit(0);
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../services/api';
 
 interface Tweet {
@@ -13,29 +13,33 @@ interface Tweet {
   };
 }
 
-interface TimelineResponse {
-  tweets?: Tweet[];
-  meta?: any;
-}
-
 const RecentTweets: React.FC = () => {
   const [tweets, setTweets] = useState<Tweet[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchTimeline();
-  }, []);
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [hasInitialLoad, setHasInitialLoad] = useState(false);
 
   const fetchTimeline = async () => {
     try {
       setLoading(true);
       setError(null);
+      setIsRateLimited(false);
+      
       const response = await api.get('/api/timeline?limit=5');
       setTweets(response.data.tweets || []);
+      setLastFetch(new Date());
+      setHasInitialLoad(true);
     } catch (error: any) {
       console.error('Failed to fetch timeline:', error);
-      setError(error.response?.data?.error || 'Failed to load timeline');
+      
+      if (error.response?.status === 429) {
+        setIsRateLimited(true);
+        setError(`Timeline rate limited. Cache refreshes every 5 minutes.`);
+      } else {
+        setError(error.response?.data?.error || 'Failed to load timeline');
+      }
     } finally {
       setLoading(false);
     }
@@ -66,6 +70,64 @@ const RecentTweets: React.FC = () => {
     return num.toString();
   };
 
+  // Show initial load button if no timeline has been loaded yet
+  if (!hasInitialLoad && !loading && !error) {
+    return (
+      <div style={{
+        border: '1px solid #dee2e6',
+        borderRadius: '8px',
+        backgroundColor: '#ffffff',
+        marginBottom: '20px'
+      }}>
+        <div style={{
+          padding: '16px',
+          borderBottom: '1px solid #e1e8ed',
+          backgroundColor: '#f8f9fa'
+        }}>
+          <h4 style={{ margin: 0, color: '#1da1f2' }}>
+            🕐 Timeline
+          </h4>
+        </div>
+        
+        <div style={{
+          padding: '40px 20px',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: '16px',
+            color: '#14171a',
+            marginBottom: '12px'
+          }}>
+            Load your recent timeline to see the latest tweets
+          </div>
+          <div style={{
+            fontSize: '12px',
+            color: '#657786',
+            marginBottom: '20px'
+          }}>
+            💡 Timeline data is cached for 5 minutes to conserve API limits
+          </div>
+          <button
+            onClick={fetchTimeline}
+            style={{
+              backgroundColor: '#1da1f2',
+              color: 'white',
+              border: 'none',
+              borderRadius: '20px',
+              padding: '10px 24px',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+          >
+            Load Timeline
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div style={{
@@ -83,27 +145,38 @@ const RecentTweets: React.FC = () => {
   if (error) {
     return (
       <div style={{
-        border: '1px solid #f5c6cb',
+        border: `1px solid ${isRateLimited ? '#ffeaa7' : '#f5c6cb'}`,
         borderRadius: '8px',
         padding: '20px',
-        backgroundColor: '#f8d7da',
-        color: '#721c24'
+        backgroundColor: isRateLimited ? '#fff3cd' : '#f8d7da',
+        color: isRateLimited ? '#856404' : '#721c24'
       }}>
-        ❌ {error}
-        <button
-          onClick={fetchTimeline}
-          style={{
-            marginLeft: '12px',
-            padding: '4px 8px',
-            fontSize: '12px',
-            backgroundColor: 'transparent',
-            border: '1px solid currentColor',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
-        >
-          Retry
-        </button>
+        {isRateLimited ? '⏱️' : '❌'} {error}
+        {isRateLimited && (
+          <div style={{ marginTop: '10px', fontSize: '12px' }}>
+            Timeline data is cached for 5 minutes to avoid rate limits.
+            {lastFetch && (
+              <div>Last updated: {lastFetch.toLocaleTimeString()}</div>
+            )}
+          </div>
+        )}
+        {!isRateLimited && (
+          <button
+            onClick={fetchTimeline}
+            style={{
+              marginLeft: '12px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              backgroundColor: 'transparent',
+              border: '1px solid currentColor',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              color: 'inherit'
+            }}
+          >
+            Retry
+          </button>
+        )}
       </div>
     );
   }
@@ -121,7 +194,7 @@ const RecentTweets: React.FC = () => {
         backgroundColor: '#f8f9fa'
       }}>
         <h4 style={{ margin: 0, color: '#1da1f2' }}>
-          🕐 Recent Timeline
+          🕐 Recent Timeline ({tweets.length} tweets)
         </h4>
       </div>
 
@@ -131,7 +204,7 @@ const RecentTweets: React.FC = () => {
           textAlign: 'center',
           color: '#657786'
         }}>
-          No tweets in your timeline yet.
+          No tweets found in your timeline. Try refreshing or check back later!
         </div>
       ) : (
         <div>
@@ -191,18 +264,28 @@ const RecentTweets: React.FC = () => {
       }}>
         <button
           onClick={fetchTimeline}
+          disabled={loading}
           style={{
-            backgroundColor: '#1da1f2',
+            backgroundColor: loading ? '#6c757d' : '#1da1f2',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
             padding: '6px 12px',
             fontSize: '12px',
-            cursor: 'pointer'
+            cursor: loading ? 'not-allowed' : 'pointer'
           }}
         >
-          Refresh Timeline
+          {loading ? 'Refreshing...' : 'Refresh Timeline'}
         </button>
+        {lastFetch && (
+          <div style={{
+            fontSize: '10px',
+            color: '#657786',
+            marginTop: '4px'
+          }}>
+            Last updated: {lastFetch.toLocaleTimeString()}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import axios, { AxiosError } from 'axios';
 import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
 import { TwitterUserResponse, OAuthToken } from '../types/twitter';
+import redisService from '../services/redis';
 
 const router = express.Router();
 
@@ -152,8 +153,23 @@ router.get('/callback', async (req, res): Promise<void> => {
   }
 });
 
-// Get current user
-router.get('/user', async (req, res): Promise<void> => {
+// Get current user (lightweight - just returns auth status without API call)
+router.get('/user', (req, res): void => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+
+  // Return basic auth info without making API call
+  res.json({ 
+    authenticated: true,
+    hasToken: true,
+    message: 'User is authenticated. Use /auth/profile to fetch Twitter profile data.'
+  });
+});
+
+// Get Twitter profile data (makes API call)
+router.get('/profile', async (req, res): Promise<void> => {
   if (!req.session.oauth_token) {
     res.status(401).json({ error: 'Not authenticated' });
     return;
@@ -167,8 +183,27 @@ router.get('/user', async (req, res): Promise<void> => {
     const { data: user } = await client.v2.me();
     
     res.json({ data: user });
-  } catch (error) {
-    console.error('Get user error:', error);
+  } catch (error: any) {
+    console.error('Get user profile error:', error);
+    
+    // Handle rate limiting specifically
+    if (error.code === 429) {
+      const resetTime = error.headers?.['x-user-limit-24hour-reset'];
+      const remaining = error.headers?.['x-user-limit-24hour-remaining'];
+      
+      if (resetTime && remaining === '0') {
+        const resetDate = new Date(parseInt(resetTime) * 1000);
+        res.status(429).json({ 
+          error: 'Daily user limit exceeded', 
+          details: `24-hour user limit reached. Resets at ${resetDate.toISOString()}`,
+          resetTime: resetDate.toISOString(),
+          remaining: 0,
+          waitTimeSeconds: Math.ceil((parseInt(resetTime) * 1000 - Date.now()) / 1000)
+        });
+        return;
+      }
+    }
+    
     res.status(500).json({ error: 'Failed to get user information' });
   }
 });
@@ -228,6 +263,101 @@ router.get('/status', (req, res): void => {
     authenticated: !!req.session.oauth_token,
     user: req.session.oauth_token ? 'authenticated' : null 
   });
+});
+
+// Redis health check endpoint
+router.get('/redis/health', async (req, res): Promise<void> => {
+  try {
+    const health = await redisService.healthCheck();
+    res.json({
+      redis: health,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Redis health check failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Cache management endpoint
+router.post('/cache/clear', async (req, res): Promise<void> => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  
+  try {
+    const pattern = req.body.pattern || '*';
+    
+    if (redisService.isRedisConnected()) {
+      const keys = await redisService.keys(pattern);
+      let clearedCount = 0;
+      
+      for (const key of keys) {
+        const success = await redisService.del(key);
+        if (success) clearedCount++;
+      }
+      
+      res.json({
+        message: `Cleared ${clearedCount} cache entries`,
+        pattern,
+        keys: keys.length,
+        cleared: clearedCount,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(503).json({ error: 'Redis not connected' });
+    }
+  } catch (error) {
+    console.error('Cache clear error:', error);
+    res.status(500).json({
+      error: 'Failed to clear cache',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Cache stats endpoint
+router.get('/cache/stats', async (req, res): Promise<void> => {
+  try {
+    if (redisService.isRedisConnected()) {
+      const allKeys = await redisService.keys('*');
+      const twitterKeys = await redisService.keys('*twitter*');
+      const timelineKeys = await redisService.keys('*timeline*');
+      const userKeys = await redisService.keys('*user*');
+      
+      res.json({
+        redis: {
+          connected: true,
+          totalKeys: allKeys.length,
+          categories: {
+            twitter: twitterKeys.length,
+            timeline: timelineKeys.length,
+            user: userKeys.length,
+            other: allKeys.length - twitterKeys.length - timelineKeys.length - userKeys.length
+          }
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.json({
+        redis: {
+          connected: false,
+          totalKeys: 0,
+          categories: {}
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('Cache stats error:', error);
+    res.status(500).json({
+      error: 'Failed to get cache stats',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Debug endpoint
