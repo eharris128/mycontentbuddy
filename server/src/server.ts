@@ -9,12 +9,22 @@ import cors from 'cors';
 import authRoutes from './routes/auth';
 import apiRoutes from './routes/api';
 import redisService from './services/redis';
+import log from './services/logger';
+import { 
+  requestIdMiddleware, 
+  httpLoggingMiddleware, 
+  errorLoggingMiddleware 
+} from './middleware/logging';
 
 const app = express();
 const PORT = process.env.PORT || 3003;
 
 // Trust proxy to handle ngrok headers properly
 app.set('trust proxy', true);
+
+// Add request ID and logging middleware first
+app.use(requestIdMiddleware);
+app.use(httpLoggingMiddleware);
 
 // Middleware to handle ngrok host headers
 app.use((req, res, next) => {
@@ -82,6 +92,9 @@ app.use(session({
 app.use('/auth', authRoutes);
 app.use('/api', apiRoutes);
 
+// Error logging middleware (should be after routes)
+app.use(errorLoggingMiddleware);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
@@ -98,46 +111,59 @@ if (process.env.NODE_ENV === 'production') {
 
 // Initialize Redis connection
 async function startServer() {
-  console.log('🚀 Initializing server...');
+  log.info('🚀 Initializing server...');
   
   // Connect to Redis first
   await redisService.connect();
   
   app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    log.info(`✅ Server running on port ${PORT}`, {
+      port: PORT,
+      environment: process.env.NODE_ENV || 'development',
+      nodeVersion: process.version,
+    });
     
     // Log Redis status
-    console.log(`Redis: ${redisService.isRedisConnected() ? '✅ Connected' : '⚠️ Not connected'}`);
+    const redisConnected = redisService.isRedisConnected();
+    log.redis(`Redis connection: ${redisConnected ? '✅ Connected' : '⚠️ Not connected'}`, {
+      connected: redisConnected,
+    });
     
     // Log OAuth configuration status (without exposing secrets)
-    console.log('\nOAuth Configuration Status:');
-    console.log(`  CLIENT_ID: ${process.env.CLIENT_ID ? '✓ Set' : '✗ Missing'}`);
-    console.log(`  CLIENT_SECRET: ${process.env.CLIENT_SECRET ? '✓ Set' : '✗ Missing'}`);
-    console.log(`  REDIRECT_URI: ${process.env.REDIRECT_URI || 'Not set (using default)'}`);
-    console.log(`  CLIENT_URL: ${process.env.CLIENT_URL || 'Not set (using default)'}`);
+    log.auth('OAuth Configuration Status', {
+      clientIdSet: !!process.env.CLIENT_ID,
+      clientSecretSet: !!process.env.CLIENT_SECRET,
+      redirectUri: process.env.REDIRECT_URI,
+      clientUrl: process.env.CLIENT_URL,
+    });
     
     // Log CORS configuration
-    console.log('\nCORS Allowed Origins:');
-    allowedOrigins.forEach(origin => console.log(`  - ${origin}`));
+    log.info('CORS Configuration', {
+      allowedOrigins,
+      originCount: allowedOrigins.length,
+    });
+    
+    log.info('🎉 Server initialization complete');
   });
 }
 
 // Start the server
 startServer().catch(error => {
-  console.error('❌ Failed to start server:', error);
+  log.errorWithContext('❌ Failed to start server', error);
   process.exit(1);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('\n🛑 Graceful shutdown initiated...');
+  log.info('🛑 Graceful shutdown initiated (SIGINT)');
   await redisService.disconnect();
+  log.info('👋 Server shutdown complete');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('\n🛑 Graceful shutdown initiated...');
+  log.info('🛑 Graceful shutdown initiated (SIGTERM)');
   await redisService.disconnect();
+  log.info('👋 Server shutdown complete');
   process.exit(0);
 });

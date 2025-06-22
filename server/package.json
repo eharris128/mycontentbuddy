@@ -11,6 +11,7 @@
   "dependencies": {
     "@twitter-api-v2/plugin-cache-redis": "^1.0.3",
     "@twitter-api-v2/plugin-rate-limit": "^1.1.0",
+    "@types/uuid": "^10.0.0",
     "axios": "^1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -19,7 +20,9 @@
     "passport": "^0.7.0",
     "passport-twitter": "^1.0.4",
     "redis": "^4.7.1",
-    "twitter-api-v2": "^1.23.2"
+    "twitter-api-v2": "^1.23.2",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

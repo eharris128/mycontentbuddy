@@ -1,4 +1,5 @@
 import { createClient, RedisClientType } from 'redis';
+import log from './logger';
 
 class RedisService {
   private client: RedisClientType | null = null;
@@ -14,17 +15,17 @@ class RedisService {
       });
 
       this.client.on('error', (err) => {
-        console.error('Redis Client Error:', err);
+        log.errorWithContext('Redis client error', err);
         this.isConnected = false;
       });
 
       this.client.on('connect', () => {
-        console.log('✅ Redis connected successfully');
+        log.redis('Connected successfully');
         this.isConnected = true;
       });
 
       this.client.on('disconnect', () => {
-        console.log('⚠️ Redis disconnected');
+        log.redis('Disconnected');
         this.isConnected = false;
       });
 
@@ -32,10 +33,12 @@ class RedisService {
       
       // Test the connection
       await this.client.ping();
-      console.log('✅ Redis ping successful');
+      log.redis('Ping successful - connection verified');
       
     } catch (error) {
-      console.error('❌ Failed to connect to Redis:', error);
+      log.errorWithContext('Failed to connect to Redis', error as Error, {
+        redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+      });
       this.client = null;
       this.isConnected = false;
       // Don't throw error - allow app to continue without Redis
@@ -46,9 +49,9 @@ class RedisService {
     if (this.client) {
       try {
         await this.client.quit();
-        console.log('✅ Redis disconnected gracefully');
+        log.redis('Disconnected gracefully');
       } catch (error) {
-        console.error('Error disconnecting from Redis:', error);
+        log.errorWithContext('Error disconnecting from Redis', error as Error);
       }
       this.client = null;
       this.isConnected = false;

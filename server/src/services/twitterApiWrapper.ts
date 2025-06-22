@@ -3,6 +3,8 @@ import RedisCache from '@twitter-api-v2/plugin-cache-redis';
 import { TwitterApiRateLimitPlugin } from '@twitter-api-v2/plugin-rate-limit';
 import redisService from './redis';
 import { redisRateLimitStore } from './rateLimitStore';
+import log from './logger';
+import { logTwitterApiEvent, logRateLimitEvent, logCacheEvent } from '../middleware/logging';
 
 export interface TwitterApiError extends Error {
   code?: number;
@@ -29,24 +31,73 @@ export class TwitterApiWrapper {
     
     // Add Redis cache if available
     if (redisClient && redisService.isRedisConnected()) {
-      console.log('✅ Initializing Twitter API with Redis cache and rate limit tracking');
+      log.twitterApi('Initializing with Redis cache and rate limit tracking');
       const cache = new RedisCache(redisClient);
       plugins.push(cache);
     } else {
-      console.log('⚠️ Redis not available, initializing Twitter API with rate limit tracking only');
+      log.warn('Redis not available, initializing Twitter API with rate limit tracking only');
     }
     
     this.client = new TwitterApi(accessToken, { plugins });
   }
 
   // Helper method to handle API calls with error formatting
-  private async makeApiCall<T>(apiCall: () => Promise<any>): Promise<T> {
+  private async makeApiCall<T>(apiCall: () => Promise<any>, endpoint?: string): Promise<T> {
+    const startTime = Date.now();
+    
     try {
+      logTwitterApiEvent(`Making API call${endpoint ? ` to ${endpoint}` : ''}`, endpoint || 'unknown');
+      
       const response = await apiCall();
+      const duration = Date.now() - startTime;
+      
+      // Log successful API call
+      logTwitterApiEvent(
+        `API call successful${endpoint ? ` to ${endpoint}` : ''}`,
+        endpoint || 'unknown',
+        {
+          responseTime: duration,
+          dataSize: response.data ? JSON.stringify(response.data).length : 0,
+        }
+      );
+      
+      // Log rate limit info if available
+      if (response.rateLimit) {
+        logRateLimitEvent(
+          'Rate limit updated',
+          endpoint || 'unknown',
+          response.rateLimit.limit,
+          response.rateLimit.remaining,
+          new Date(response.rateLimit.reset * 1000)
+        );
+      }
+      
       return response.data || response;
     } catch (error: any) {
+      const duration = Date.now() - startTime;
+      
+      // Log failed API call
+      log.errorWithContext(
+        `Twitter API call failed${endpoint ? ` to ${endpoint}` : ''}`,
+        error,
+        {
+          endpoint,
+          responseTime: duration,
+          statusCode: error.code || error.status,
+        }
+      );
+      
       // Format rate limit errors for better handling
       if (error.code === 429 || (error.status === 429)) {
+        // Log rate limit hit
+        logRateLimitEvent(
+          'Rate limit exceeded',
+          endpoint || 'unknown',
+          error.rateLimit?.limit,
+          error.rateLimit?.remaining || 0,
+          error.rateLimit?.reset ? new Date(error.rateLimit.reset * 1000) : undefined
+        );
+        
         const formattedError = new Error('Rate limited. Try again later.') as TwitterApiError;
         formattedError.code = 429;
         
@@ -70,10 +121,12 @@ export class TwitterApiWrapper {
     const userData = await this.makeApiCall(
       () => this.client.v2.me({
         'user.fields': ['profile_image_url', 'description', 'public_metrics', 'created_at']
-      })
+      }),
+      'users/me'
     );
     
     this.userId = (userData as any).id;
+    log.twitterApi('User ID cached for session', { userId: this.userId });
     return userData;
   }
 
@@ -85,7 +138,8 @@ export class TwitterApiWrapper {
         'tweet.fields': ['created_at', 'public_metrics', 'author_id'],
         'user.fields': ['name', 'username', 'profile_image_url'],
         expansions: ['author_id']
-      })
+      }),
+      'tweets/timelines/home'
     );
   }
 
@@ -102,22 +156,51 @@ export class TwitterApiWrapper {
 
   // Post tweet (no caching for write operations)
   async postTweet(text: string) {
-    console.log('Posting tweet (no cache)');
-    const response = await this.client.v2.tweet(text);
+    const startTime = Date.now();
     
-    // Clear timeline caches after posting (Redis plugin handles this automatically for most cases)
-    if (redisService.isRedisConnected()) {
-      try {
-        const cacheKeys = await redisService.keys('*timeline*');
-        for (const key of cacheKeys) {
-          await redisService.del(key);
+    log.tweet('Posting tweet', {
+      textLength: text.length,
+      userId: this.userId,
+    });
+    
+    try {
+      const response = await this.client.v2.tweet(text);
+      const duration = Date.now() - startTime;
+      
+      log.tweet('Tweet posted successfully', {
+        tweetId: response.data.id,
+        userId: this.userId,
+        textLength: text.length,
+        responseTime: duration,
+      });
+      
+      // Clear timeline caches after posting
+      if (redisService.isRedisConnected()) {
+        try {
+          const cacheKeys = await redisService.keys('*timeline*');
+          for (const key of cacheKeys) {
+            await redisService.del(key);
+          }
+          logCacheEvent('Timeline cache cleared after tweet post', 'timeline_cache', false);
+        } catch (error) {
+          log.warn('Failed to clear timeline cache after posting', { 
+            errorMessage: error instanceof Error ? error.message : String(error) 
+          });
         }
-      } catch (error) {
-        console.warn('Failed to clear timeline cache after posting:', error);
       }
+      
+      return response.data;
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      
+      log.errorWithContext('Failed to post tweet', error, {
+        userId: this.userId,
+        textLength: text.length,
+        responseTime: duration,
+      });
+      
+      throw error;
     }
-    
-    return response.data;
   }
 
   // Like tweet (no caching for write operations)

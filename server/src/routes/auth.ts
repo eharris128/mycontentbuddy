@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
 import { TwitterUserResponse, OAuthToken } from '../types/twitter';
 import redisService from '../services/redis';
+import log from '../services/logger';
+import { logAuthEvent } from '../middleware/logging';
 
 const router = express.Router();
 
@@ -95,9 +97,11 @@ router.get('/callback', async (req, res): Promise<void> => {
   try {
     const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = getOAuthConfig();
     
-    console.log('Exchanging code for token...');
-    console.log('Using CLIENT_ID:', CLIENT_ID);
-    console.log('Using REDIRECT_URI:', REDIRECT_URI);
+    logAuthEvent('Exchanging OAuth code for tokens', req, {
+      clientId: CLIENT_ID.substring(0, 10) + '...',
+      redirectUri: REDIRECT_URI,
+      codeLength: (code as string).length,
+    });
     
     // Create client with credentials for token exchange
     const client = new TwitterApi({ 
@@ -112,9 +116,10 @@ router.get('/callback', async (req, res): Promise<void> => {
       redirectUri: REDIRECT_URI,
     });
     
-    console.log('Token exchange successful:', {
-      access_token: accessToken ? 'present' : 'missing',
-      refresh_token: refreshToken ? 'present' : 'missing'
+    logAuthEvent('OAuth token exchange successful', req, {
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken,
+      tokenLength: accessToken ? accessToken.length : 0,
     });
 
     const token: OAuthToken = {
@@ -139,13 +144,23 @@ router.get('/callback', async (req, res): Promise<void> => {
       timestamp: Date.now()
     }));
 
-    console.log('Redirecting to client with sync token:', `${process.env.CLIENT_URL || 'http://localhost:3002'}${redirectUrl}?sync=${syncToken}`);
-    res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3002'}${redirectUrl}?sync=${syncToken}`);
+    const redirectTarget = `${process.env.CLIENT_URL || 'http://localhost:3002'}${redirectUrl}?sync=${syncToken}`;
+    
+    logAuthEvent('Redirecting to client with sync token', req, {
+      redirectUrl: redirectTarget,
+      syncTokenLength: syncToken.length,
+    });
+    
+    res.redirect(redirectTarget);
   } catch (error) {
-    console.error('OAuth callback error:', error);
+    log.errorWithContext('OAuth callback error', error as Error, log.extractRequestMeta(req));
+    
     if (axios.isAxiosError(error)) {
-      console.error('Error response data:', error.response?.data);
-      console.error('Error response status:', error.response?.status);
+      log.error('OAuth error details', {
+        responseData: error.response?.data,
+        responseStatus: error.response?.status,
+        requestUrl: error.config?.url,
+      });
       res.status(500).json({ error: 'Authentication failed', details: error.response?.data });
     } else {
       res.status(500).json({ error: 'Authentication failed', details: 'Unknown error' });
