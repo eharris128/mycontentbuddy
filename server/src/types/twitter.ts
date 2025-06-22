@@ -26,6 +26,7 @@ export interface OAuthToken {
   refresh_token?: string;
   token_type: string;
   expires_in?: number;
+  scope?: string;
 }
 
 export interface AuthSession {

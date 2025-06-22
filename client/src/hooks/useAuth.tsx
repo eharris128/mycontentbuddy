@@ -14,6 +14,7 @@ interface AuthContextType {
   login: (redirectUrl?: string) => void;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  forceRefreshAuth: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,12 +27,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuthStatus = async () => {
     try {
+      console.log('Checking authentication status...');
       const response = await api.get('/auth/status');
+      console.log('Auth status response:', response.data);
+      
       if (response.data.authenticated) {
+        console.log('User is authenticated, fetching user data...');
         await fetchUser();
+      } else {
+        console.log('User is not authenticated');
+        setUser(null);
       }
     } catch (error) {
       console.error('Auth status check failed:', error);
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -40,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchUser = async () => {
     try {
       const response = await api.get('/auth/user');
+      console.log('User data response:', response.data);
       setUser(response.data.data);
     } catch (error) {
       console.error('Fetch user failed:', error);
@@ -49,19 +59,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = (redirectUrl: string = '/') => {
     const params = new URLSearchParams({ redirect_url: redirectUrl });
-    // Redirect to backend OAuth endpoint
-    const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3003';
-    window.location.href = `${apiBaseUrl}/auth/start?${params.toString()}`;
+    // Use tunnel URL for OAuth to maintain session consistency
+    const oauthBaseUrl = process.env.REACT_APP_OAUTH_URL || window.location.origin;
+    window.location.href = `${oauthBaseUrl}/auth/start?${params.toString()}`;
   };
 
   const logout = async () => {
     try {
+      console.log('Logging out...');
       await api.post('/auth/logout');
       setUser(null);
+      console.log('Logout successful, redirecting...');
       window.location.href = '/';
     } catch (error) {
       console.error('Logout failed:', error);
+      // Even if logout API fails, clear local state
+      setUser(null);
+      window.location.href = '/';
     }
+  };
+
+  const forceRefreshAuth = () => {
+    console.log('Manually refreshing authentication status...');
+    setIsLoading(true);
+    checkAuthStatus();
   };
 
   const refreshUser = async () => {
@@ -74,6 +95,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkAuthStatus();
   }, []);
 
+  // Re-check auth status when the page becomes visible (useful after OAuth redirects)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('Page became visible, re-checking auth status...');
+        checkAuthStatus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
   const value = {
     user,
     isAuthenticated,
@@ -81,6 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     refreshUser,
+    forceRefreshAuth,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

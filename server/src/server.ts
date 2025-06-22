@@ -12,10 +12,46 @@ import apiRoutes from './routes/api';
 const app = express();
 const PORT = process.env.PORT || 3003;
 
-// Middleware
+// Trust proxy to handle ngrok headers properly
+app.set('trust proxy', true);
+
+// Middleware to handle ngrok host headers
+app.use((req, res, next) => {
+  // Allow requests from ngrok domains
+  const host = req.get('host');
+  if (host && (host.includes('ngrok-free.app') || host.includes('ngrok.io') || host.includes('localhost'))) {
+    next();
+  } else {
+    // Log rejected hosts for debugging
+    console.log('Rejected host:', host);
+    next();
+  }
+});
+
+// CORS configuration to handle multiple origins
+const allowedOrigins = [
+  process.env.CLIENT_URL || 'http://localhost:3002',
+  'http://localhost:3002',
+  'http://localhost:3003',
+  process.env.REDIRECT_URI ? new URL(process.env.REDIRECT_URI).origin : null,
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3002',
-  credentials: true
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['set-cookie']
 }));
 
 app.use(express.json());
@@ -25,11 +61,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(session({
   secret: process.env.FLASK_SESSION_KEY || 'default-secret',
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true, // Allow sessions to be created
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Set to false for development with tunnels
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: 'lax' // Allow cross-site requests for OAuth
   }
 }));
 
@@ -61,4 +98,8 @@ app.listen(PORT, () => {
   console.log(`  CLIENT_SECRET: ${process.env.CLIENT_SECRET ? '✓ Set' : '✗ Missing'}`);
   console.log(`  REDIRECT_URI: ${process.env.REDIRECT_URI || 'Not set (using default)'}`);
   console.log(`  CLIENT_URL: ${process.env.CLIENT_URL || 'Not set (using default)'}`);
+  
+  // Log CORS configuration
+  console.log('\nCORS Allowed Origins:');
+  allowedOrigins.forEach(origin => console.log(`  - ${origin}`));
 });

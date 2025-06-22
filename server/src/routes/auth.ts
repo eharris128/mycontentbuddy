@@ -1,6 +1,7 @@
 import express from 'express';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import crypto from 'crypto';
+import { TwitterApi } from 'twitter-api-v2';
 import { TwitterUserResponse, OAuthToken } from '../types/twitter';
 
 const router = express.Router();
@@ -23,20 +24,7 @@ const getOAuthConfig = () => {
   return { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI };
 };
 
-const AUTH_URL = 'https://twitter.com/i/oauth2/authorize';
-const TOKEN_URL = 'https://api.twitter.com/2/oauth2/token';
 const SCOPES = ['tweet.read', 'users.read', 'tweet.write', 'offline.access'];
-
-// Generate PKCE parameters
-function generatePKCE() {
-  const codeVerifier = crypto.randomBytes(32).toString('base64url');
-  const codeChallenge = crypto
-    .createHash('sha256')
-    .update(codeVerifier)
-    .digest('base64url');
-  
-  return { codeVerifier, codeChallenge };
-}
 
 // Store PKCE verifier in session (in production, use Redis or database)
 const pkceStore = new Map<string, string>();
@@ -51,25 +39,28 @@ router.get('/start', (req, res): void => {
   const redirectUrl = req.query.redirect_url as string || '/';
   req.session.redirect_url = redirectUrl;
 
-  const { codeVerifier, codeChallenge } = generatePKCE();
-  const state = crypto.randomBytes(16).toString('hex');
-  
-  // Store PKCE verifier and state
-  pkceStore.set(state, codeVerifier);
-  req.session.oauth_state = state;
-
-  const { CLIENT_ID, REDIRECT_URI } = getOAuthConfig();
-  
-  const authUrl = new URL(AUTH_URL);
-  authUrl.searchParams.append('response_type', 'code');
-  authUrl.searchParams.append('client_id', CLIENT_ID);
-  authUrl.searchParams.append('redirect_uri', REDIRECT_URI);
-  authUrl.searchParams.append('scope', SCOPES.join(' '));
-  authUrl.searchParams.append('state', state);
-  authUrl.searchParams.append('code_challenge', codeChallenge);
-  authUrl.searchParams.append('code_challenge_method', 'S256');
-
-  res.redirect(authUrl.toString());
+  try {
+    const { CLIENT_ID, REDIRECT_URI } = getOAuthConfig();
+    
+    // Create a client with just the ID for OAuth2
+    const client = new TwitterApi({ clientId: CLIENT_ID });
+    
+    // Generate the OAuth2 auth link
+    const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
+      REDIRECT_URI,
+      { scope: SCOPES }
+    );
+    
+    // Store PKCE verifier and state
+    pkceStore.set(state, codeVerifier);
+    req.session.oauth_state = state;
+    
+    console.log('Generated OAuth URL:', url);
+    res.redirect(url);
+  } catch (error) {
+    console.error('Failed to generate OAuth URL:', error);
+    res.status(500).json({ error: 'Failed to start OAuth flow' });
+  }
 });
 
 // OAuth callback
@@ -103,21 +94,35 @@ router.get('/callback', async (req, res): Promise<void> => {
   try {
     const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = getOAuthConfig();
     
-    // Exchange code for token
-    const tokenResponse = await axios.post(TOKEN_URL, {
-      code,
-      grant_type: 'authorization_code',
-      client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
-      code_verifier: codeVerifier,
-    }, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`,
-      },
+    console.log('Exchanging code for token...');
+    console.log('Using CLIENT_ID:', CLIENT_ID);
+    console.log('Using REDIRECT_URI:', REDIRECT_URI);
+    
+    // Create client with credentials for token exchange
+    const client = new TwitterApi({ 
+      clientId: CLIENT_ID,
+      clientSecret: CLIENT_SECRET 
+    });
+    
+    // Exchange code for token using twitter-api-v2
+    const { client: authenticatedClient, accessToken, refreshToken } = await client.loginWithOAuth2({
+      code: code as string,
+      codeVerifier,
+      redirectUri: REDIRECT_URI,
+    });
+    
+    console.log('Token exchange successful:', {
+      access_token: accessToken ? 'present' : 'missing',
+      refresh_token: refreshToken ? 'present' : 'missing'
     });
 
-    const token: OAuthToken = tokenResponse.data;
+    const token: OAuthToken = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: 'bearer',
+      expires_in: 7200, // Twitter default
+      scope: SCOPES.join(' ')
+    };
     req.session.oauth_token = token;
 
     // Clean up
@@ -126,10 +131,17 @@ router.get('/callback', async (req, res): Promise<void> => {
     const redirectUrl = req.session.redirect_url || '/';
     delete req.session.redirect_url;
 
+    console.log('Redirecting to client:', `${process.env.CLIENT_URL || 'http://localhost:3002'}${redirectUrl}`);
     res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3002'}${redirectUrl}`);
   } catch (error) {
     console.error('OAuth callback error:', error);
-    res.status(500).json({ error: 'Authentication failed' });
+    if (axios.isAxiosError(error)) {
+      console.error('Error response data:', error.response?.data);
+      console.error('Error response status:', error.response?.status);
+      res.status(500).json({ error: 'Authentication failed', details: error.response?.data });
+    } else {
+      res.status(500).json({ error: 'Authentication failed', details: 'Unknown error' });
+    }
   }
 });
 
@@ -141,14 +153,13 @@ router.get('/user', async (req, res): Promise<void> => {
   }
 
   try {
-    const response = await axios.get<TwitterUserResponse>('https://api.twitter.com/2/users/me', {
-      headers: {
-        'Authorization': `Bearer ${req.session.oauth_token.access_token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    res.json(response.data);
+    // Create authenticated client with access token
+    const client = new TwitterApi(req.session.oauth_token.access_token);
+    
+    // Get current user info
+    const { data: user } = await client.v2.me();
+    
+    res.json({ data: user });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user information' });
@@ -171,6 +182,20 @@ router.get('/status', (req, res): void => {
   res.json({ 
     authenticated: !!req.session.oauth_token,
     user: req.session.oauth_token ? 'authenticated' : null 
+  });
+});
+
+// Debug endpoint
+router.get('/debug', (req, res): void => {
+  const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = getOAuthConfig();
+  res.json({
+    clientIdLength: CLIENT_ID.length,
+    clientIdPrefix: CLIENT_ID.substring(0, 5),
+    hasClientSecret: !!CLIENT_SECRET,
+    redirectUri: REDIRECT_URI,
+    scopes: SCOPES,
+    sessionConfigured: !!req.session,
+    usingLibrary: 'twitter-api-v2'
   });
 });
 
