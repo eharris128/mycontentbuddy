@@ -4,6 +4,7 @@ import LoginPage from './LoginPage';
 import TweetComposer from './TweetComposer';
 import UserStats from './UserStats';
 import RecentTweets from './RecentTweets';
+import RateLimitDashboard from './RateLimitDashboard';
 
 const HomePage: React.FC = () => {
   const { user, isAuthenticated, isLoading, logout, forceRefreshAuth } = useAuth();
@@ -112,6 +113,9 @@ const HomePage: React.FC = () => {
 
       {/* Full Width - Recent Timeline */}
       <RecentTweets />
+
+      {/* Rate Limit Dashboard */}
+      <RateLimitDashboard />
 
       {/* Legacy User Info for Fallback */}
       {user && (

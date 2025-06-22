@@ -1,6 +1,8 @@
 import { TwitterApi } from 'twitter-api-v2';
 import RedisCache from '@twitter-api-v2/plugin-cache-redis';
+import { TwitterApiRateLimitPlugin } from '@twitter-api-v2/plugin-rate-limit';
 import redisService from './redis';
+import { redisRateLimitStore } from './rateLimitStore';
 
 export interface TwitterApiError extends Error {
   code?: number;
@@ -15,19 +17,26 @@ export interface TwitterApiError extends Error {
 export class TwitterApiWrapper {
   private client: TwitterApi;
   private userId?: string;
+  private rateLimitPlugin: TwitterApiRateLimitPlugin;
 
   constructor(accessToken: string) {
     const redisClient = redisService.getClient();
+    const plugins = [];
     
+    // Initialize rate limit plugin
+    this.rateLimitPlugin = new TwitterApiRateLimitPlugin(redisRateLimitStore);
+    plugins.push(this.rateLimitPlugin);
+    
+    // Add Redis cache if available
     if (redisClient && redisService.isRedisConnected()) {
-      console.log('✅ Initializing Twitter API with Redis cache');
+      console.log('✅ Initializing Twitter API with Redis cache and rate limit tracking');
       const cache = new RedisCache(redisClient);
-      
-      this.client = new TwitterApi(accessToken, { plugins: [cache] });
+      plugins.push(cache);
     } else {
-      console.log('⚠️ Redis not available, initializing Twitter API without cache');
-      this.client = new TwitterApi(accessToken);
+      console.log('⚠️ Redis not available, initializing Twitter API with rate limit tracking only');
     }
+    
+    this.client = new TwitterApi(accessToken, { plugins });
   }
 
   // Helper method to handle API calls with error formatting
@@ -192,5 +201,68 @@ export class TwitterApiWrapper {
         'user.fields': ['profile_image_url', 'description', 'public_metrics', 'created_at']
       })
     );
+  }
+
+  // Rate limit management methods
+  async getRateLimit(endpoint: string) {
+    return this.rateLimitPlugin.v2.getRateLimit(endpoint);
+  }
+
+  async getAllRateLimits() {
+    return redisRateLimitStore.getAllRateLimits();
+  }
+
+  async getRateLimitStats() {
+    return redisRateLimitStore.getRateLimitStats();
+  }
+
+  async checkRateLimit(endpoint: string): Promise<{
+    canMakeRequest: boolean;
+    limit?: number;
+    remaining?: number;
+    resetTime?: Date;
+    waitTime?: number;
+  }> {
+    try {
+      const rateLimit = await this.getRateLimit(endpoint);
+      
+      if (!rateLimit) {
+        return { canMakeRequest: true };
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const resetTime = new Date(rateLimit.reset * 1000);
+      
+      // Check if rate limit window has reset
+      if (now >= rateLimit.reset) {
+        return { canMakeRequest: true };
+      }
+
+      // Check if we have remaining requests
+      if (rateLimit.remaining > 0) {
+        return {
+          canMakeRequest: true,
+          limit: rateLimit.limit,
+          remaining: rateLimit.remaining,
+          resetTime
+        };
+      }
+
+      // Rate limited
+      return {
+        canMakeRequest: false,
+        limit: rateLimit.limit,
+        remaining: rateLimit.remaining,
+        resetTime,
+        waitTime: rateLimit.reset - now
+      };
+    } catch (error) {
+      console.error('Failed to check rate limit:', error);
+      return { canMakeRequest: true }; // Fail open
+    }
+  }
+
+  getRateLimitPlugin() {
+    return this.rateLimitPlugin;
   }
 }

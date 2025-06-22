@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@twitter-api-v2/plugin-cache-redis": "^1.0.3",
+    "@twitter-api-v2/plugin-rate-limit": "^1.1.0",
     "axios": "^1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",

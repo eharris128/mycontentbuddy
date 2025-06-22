@@ -360,6 +360,98 @@ router.get('/cache/stats', async (req, res): Promise<void> => {
   }
 });
 
+// Rate limit overview endpoint
+router.get('/rate-limits/overview', async (req, res): Promise<void> => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { TwitterApiWrapper } = await import('../services/twitterApiWrapper');
+    const twitterApi = new TwitterApiWrapper(req.session.oauth_token.access_token);
+    
+    const [allRateLimits, stats] = await Promise.all([
+      twitterApi.getAllRateLimits(),
+      twitterApi.getRateLimitStats()
+    ]);
+
+    // Group rate limits by category
+    const categorized = {
+      users: {} as any,
+      tweets: {} as any,
+      timeline: {} as any,
+      search: {} as any,
+      other: {} as any
+    };
+
+    const now = Math.floor(Date.now() / 1000);
+
+    for (const [endpoint, rateLimit] of Object.entries(allRateLimits)) {
+      const enrichedLimit = {
+        ...rateLimit,
+        usagePercent: ((rateLimit.limit - rateLimit.remaining) / rateLimit.limit) * 100,
+        isExpired: now >= rateLimit.reset,
+        resetTime: new Date(rateLimit.reset * 1000).toISOString(),
+        timeUntilReset: Math.max(rateLimit.reset - now, 0)
+      };
+
+      if (endpoint.includes('users')) {
+        categorized.users[endpoint] = enrichedLimit;
+      } else if (endpoint.includes('tweets') && endpoint.includes('timeline')) {
+        categorized.timeline[endpoint] = enrichedLimit;
+      } else if (endpoint.includes('tweets')) {
+        categorized.tweets[endpoint] = enrichedLimit;
+      } else if (endpoint.includes('search')) {
+        categorized.search[endpoint] = enrichedLimit;
+      } else {
+        categorized.other[endpoint] = enrichedLimit;
+      }
+    }
+
+    res.json({
+      overview: stats,
+      categories: categorized,
+      totalEndpoints: Object.keys(allRateLimits).length,
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Rate limit overview error:', error);
+    res.status(500).json({
+      error: 'Failed to get rate limit overview',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Specific endpoint rate limit check
+router.get('/rate-limits/check/:endpoint', async (req, res): Promise<void> => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { TwitterApiWrapper } = await import('../services/twitterApiWrapper');
+    const twitterApi = new TwitterApiWrapper(req.session.oauth_token.access_token);
+    
+    const endpoint = decodeURIComponent(req.params.endpoint);
+    const check = await twitterApi.checkRateLimit(endpoint);
+    
+    res.json({
+      endpoint,
+      ...check,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Rate limit check error:', error);
+    res.status(500).json({
+      error: 'Failed to check rate limit',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Debug endpoint
 router.get('/debug', (req, res): void => {
   const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI } = getOAuthConfig();
