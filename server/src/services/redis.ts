@@ -122,6 +122,11 @@ class RedisService {
     }
   }
 
+  // Alias for set with TTL for clarity
+  async setWithTTL(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    return this.set(key, value, ttlSeconds);
+  }
+
   async del(key: string): Promise<boolean> {
     if (!this.client || !this.isConnected) {
       return false;

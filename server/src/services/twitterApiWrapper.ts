@@ -39,11 +39,64 @@ export class TwitterApiWrapper {
     }
     
     this.client = new TwitterApi(accessToken, { plugins });
+    
+    // Log token info for debugging (without exposing the actual token)
+    log.twitterApi('TwitterApiWrapper initialized', {
+      tokenLength: accessToken.length,
+      tokenPrefix: accessToken.substring(0, 10) + '...',
+      hasRedis: redisService.isRedisConnected(),
+      pluginCount: plugins.length,
+    });
   }
 
-  // Helper method to handle API calls with error formatting
+  // Generate time-based cache keys for lists endpoints
+  private generateListsCacheKey(endpoint: string): string {
+    const now = Date.now();
+    const timeWindow = Math.floor(now / (15 * 60 * 1000)); // 15-minute windows
+    const userId = this.userId || 'unknown';
+    return `lists:enhanced:${endpoint}:${userId}:${timeWindow}`;
+  }
+
+  // Check for cached lists data before making API call
+  private async checkListsCache<T>(endpoint: string): Promise<T | null> {
+    if (!endpoint.includes('lists') || !redisService.isRedisConnected()) {
+      return null;
+    }
+
+    try {
+      const cacheKey = this.generateListsCacheKey(endpoint);
+      const cached = await redisService.get(cacheKey);
+      
+      if (cached) {
+        const parsedCache = JSON.parse(cached);
+        const age = Date.now() - parsedCache.timestamp;
+        
+        log.twitterApi(`Using cached lists data: ${cacheKey}`, {
+          endpoint,
+          ageMinutes: Math.round(age / 60000),
+          dataSize: cached.length
+        });
+        
+        return parsedCache.data as T;
+      }
+    } catch (error) {
+      log.warn(`Failed to check lists cache for ${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    
+    return null;
+  }
+
+  // Helper method to handle API calls with error formatting and enhanced caching for lists
   private async makeApiCall<T>(apiCall: () => Promise<any>, endpoint?: string): Promise<T> {
     const startTime = Date.now();
+    
+    // Check cache first for lists endpoints
+    if (endpoint && endpoint.includes('lists')) {
+      const cached = await this.checkListsCache<T>(endpoint);
+      if (cached) {
+        return cached;
+      }
+    }
     
     try {
       logTwitterApiEvent(`Making API call${endpoint ? ` to ${endpoint}` : ''}`, endpoint || 'unknown');
@@ -70,6 +123,33 @@ export class TwitterApiWrapper {
           response.rateLimit.remaining,
           new Date(response.rateLimit.reset * 1000)
         );
+      }
+
+      // Enhanced caching for lists endpoints with longer TTL
+      if (endpoint && endpoint.includes('lists') && redisService.isRedisConnected()) {
+        try {
+          const cacheKey = this.generateListsCacheKey(endpoint);
+          const ttl = 15 * 60; // 15 minutes for lists endpoints
+          
+          await redisService.setWithTTL(
+            cacheKey,
+            JSON.stringify({
+              data: response.data || response,
+              timestamp: Date.now(),
+              endpoint,
+              userId: this.userId
+            }),
+            ttl
+          );
+          
+          log.twitterApi(`Enhanced cache set for lists endpoint: ${cacheKey}`, {
+            endpoint,
+            ttl,
+            dataSize: JSON.stringify(response.data || response).length
+          });
+        } catch (cacheError) {
+          log.warn(`Failed to set enhanced cache for lists endpoint ${endpoint}: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`);
+        }
       }
       
       return response.data || response;
@@ -110,6 +190,41 @@ export class TwitterApiWrapper {
         }
         
         throw formattedError;
+      }
+
+      // Enhanced 403 error logging for OAuth/permissions debugging
+      if (error.code === 403 || (error.status === 403)) {
+        log.errorWithContext(
+          `403 Forbidden error on ${endpoint || 'unknown endpoint'}`,
+          error,
+          {
+            endpoint,
+            errorCode: error.code || error.status,
+            errorMessage: error.message,
+            errorData: error.data,
+            responseData: error.response?.data,
+            headers: error.response?.headers,
+            requestUrl: error.config?.url,
+            requestMethod: error.config?.method,
+            oauthScopes: 'Will be logged separately',
+          }
+        );
+        
+        // Log additional debugging info for 403 errors
+        if (error.response?.data) {
+          log.errorWithContext(
+            `Detailed 403 error response for ${endpoint}`,
+            new Error('403 Debug Info'),
+            {
+              fullResponse: JSON.stringify(error.response.data, null, 2),
+              statusText: error.response.statusText,
+              title: error.response.data.title,
+              detail: error.response.data.detail,
+              type: error.response.data.type,
+              errors: error.response.data.errors,
+            }
+          );
+        }
       }
       
       throw error;
@@ -347,5 +462,163 @@ export class TwitterApiWrapper {
 
   getRateLimitPlugin() {
     return this.rateLimitPlugin;
+  }
+
+  // Get cache information for lists endpoints
+  async getListsCacheInfo(): Promise<{
+    ownedLists?: { key: string; cached: boolean; age?: number };
+    membershipLists?: { key: string; cached: boolean; age?: number };
+    listTweets: { [listId: string]: { key: string; cached: boolean; age?: number } };
+    listMembers: { [listId: string]: { key: string; cached: boolean; age?: number } };
+  }> {
+    const result = {
+      ownedLists: undefined as any,
+      membershipLists: undefined as any,
+      listTweets: {} as any,
+      listMembers: {} as any
+    };
+
+    if (!redisService.isRedisConnected()) {
+      return result;
+    }
+
+    try {
+      // Check owned lists cache
+      const ownedKey = this.generateListsCacheKey('lists/owned');
+      const ownedCached = await redisService.get(ownedKey);
+      result.ownedLists = {
+        key: ownedKey,
+        cached: !!ownedCached,
+        age: ownedCached ? Date.now() - JSON.parse(ownedCached).timestamp : undefined
+      };
+
+      // Check membership lists cache
+      const membershipKey = this.generateListsCacheKey('lists/memberships');
+      const membershipCached = await redisService.get(membershipKey);
+      result.membershipLists = {
+        key: membershipKey,
+        cached: !!membershipCached,
+        age: membershipCached ? Date.now() - JSON.parse(membershipCached).timestamp : undefined
+      };
+
+      // Get all lists-related cache keys
+      const listKeys = await redisService.keys('lists:enhanced:*');
+      for (const key of listKeys) {
+        const cached = await redisService.get(key);
+        if (cached) {
+          const parsedCache = JSON.parse(cached);
+          const keyParts = key.split(':');
+          const endpoint = keyParts[2];
+          
+          if (endpoint === 'lists/tweets') {
+            const listId = keyParts[3] || 'unknown';
+            result.listTweets[listId] = {
+              key,
+              cached: true,
+              age: Date.now() - parsedCache.timestamp
+            };
+          } else if (endpoint === 'lists/members') {
+            const listId = keyParts[3] || 'unknown';
+            result.listMembers[listId] = {
+              key,
+              cached: true,
+              age: Date.now() - parsedCache.timestamp
+            };
+          }
+        }
+      }
+    } catch (error) {
+      log.warn(`Failed to get lists cache info: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    return result;
+  }
+
+  // Clear all lists cache for current user
+  async clearListsCache(): Promise<{ cleared: number; keys: string[] }> {
+    if (!redisService.isRedisConnected()) {
+      return { cleared: 0, keys: [] };
+    }
+
+    try {
+      const userId = this.userId || 'unknown';
+      const pattern = `lists:enhanced:*:${userId}:*`;
+      const keys = await redisService.keys(pattern);
+      
+      let cleared = 0;
+      for (const key of keys) {
+        const success = await redisService.del(key);
+        if (success) cleared++;
+      }
+
+      log.twitterApi(`Cleared ${cleared} lists cache entries`, {
+        userId,
+        pattern,
+        totalKeys: keys.length
+      });
+
+      return { cleared, keys };
+    } catch (error) {
+      log.warn(`Failed to clear lists cache: ${error instanceof Error ? error.message : String(error)}`);
+      return { cleared: 0, keys: [] };
+    }
+  }
+
+  // Get user's owned lists (cached by Redis plugin)
+  async getUserLists(userId?: string) {
+    const targetUserId = userId || this.userId;
+    if (!targetUserId) {
+      await this.getCurrentUser(); // This will set this.userId
+    }
+    
+    return this.makeApiCall(
+      () => this.client.v2.listsOwned(targetUserId || this.userId!, {
+        'list.fields': ['created_at', 'description', 'follower_count', 'member_count', 'private', 'owner_id'],
+        'user.fields': ['name', 'username', 'profile_image_url'],
+        expansions: ['owner_id']
+      }),
+      'lists/owned'
+    );
+  }
+
+  // Get lists the user is a member of (cached by Redis plugin)
+  async getUserListMemberships(userId?: string) {
+    const targetUserId = userId || this.userId;
+    if (!targetUserId) {
+      await this.getCurrentUser(); // This will set this.userId
+    }
+    
+    return this.makeApiCall(
+      () => this.client.v2.listMemberships(targetUserId || this.userId!, {
+        'list.fields': ['created_at', 'description', 'follower_count', 'member_count', 'private', 'owner_id'],
+        'user.fields': ['name', 'username', 'profile_image_url'],
+        expansions: ['owner_id']
+      }),
+      'lists/memberships'
+    );
+  }
+
+  // Get tweets from a specific list (cached by Redis plugin)
+  async getListTweets(listId: string, maxResults: number = 1) {
+    return this.makeApiCall(
+      () => this.client.v2.listTweets(listId, {
+        max_results: maxResults,
+        'tweet.fields': ['created_at', 'public_metrics', 'author_id', 'context_annotations'],
+        'user.fields': ['name', 'username', 'profile_image_url'],
+        expansions: ['author_id']
+      }),
+      'lists/tweets'
+    );
+  }
+
+  // Get members of a specific list (cached by Redis plugin)
+  async getListMembers(listId: string, maxResults: number = 20) {
+    return this.makeApiCall(
+      () => this.client.v2.listMembers(listId, {
+        max_results: maxResults,
+        'user.fields': ['name', 'username', 'profile_image_url', 'description', 'public_metrics', 'created_at']
+      }),
+      'lists/members'
+    );
   }
 }

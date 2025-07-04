@@ -35,6 +35,50 @@ export interface AuthSession {
   redirect_url?: string;
 }
 
+export interface TwitterList {
+  id: string;
+  name: string;
+  description?: string;
+  created_at?: string;
+  follower_count?: number;
+  member_count?: number;
+  private?: boolean;
+  owner_id?: string;
+}
+
+export interface TwitterListResponse {
+  data: TwitterList[];
+  meta?: {
+    result_count?: number;
+    next_token?: string;
+    previous_token?: string;
+  };
+}
+
+export interface TwitterListMember {
+  id: string;
+  name: string;
+  username: string;
+  profile_image_url?: string;
+  description?: string;
+  public_metrics?: {
+    followers_count: number;
+    following_count: number;
+    tweet_count: number;
+    listed_count: number;
+  };
+  created_at?: string;
+}
+
+export interface TwitterListMemberResponse {
+  data: TwitterListMember[];
+  meta?: {
+    result_count?: number;
+    next_token?: string;
+    previous_token?: string;
+  };
+}
+
 declare module 'express-session' {
   interface SessionData extends AuthSession {}
 }

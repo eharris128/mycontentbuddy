@@ -89,4 +89,28 @@ export class TwitterService {
     // The twitter-api-v2 library doesn't expose this method directly
     return null;
   }
+
+  // Get user's owned lists
+  async getUserLists(userId?: string) {
+    const result = await this.client.getUserLists(userId) as any;
+    return { lists: result.lists || result.data, meta: result.meta };
+  }
+
+  // Get lists the user is a member of
+  async getUserListMemberships(userId?: string) {
+    const result = await this.client.getUserListMemberships(userId) as any;
+    return { lists: result.lists || result.data, meta: result.meta };
+  }
+
+  // Get tweets from a specific list
+  async getListTweets(listId: string, maxResults: number = 1) {
+    const result = await this.client.getListTweets(listId, maxResults) as any;
+    return { tweets: result.tweets || result.data, meta: result.meta };
+  }
+
+  // Get members of a specific list
+  async getListMembers(listId: string, maxResults: number = 20) {
+    const result = await this.client.getListMembers(listId, maxResults) as any;
+    return { members: result.members || result.data, meta: result.meta };
+  }
 }

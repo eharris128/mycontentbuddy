@@ -5,6 +5,7 @@ import HomePage from './components/HomePage';
 import LoginPage from './components/LoginPage';
 import Playground from './components/Playground';
 import ThankYou from './components/ThankYou';
+import ListsPage from './components/ListsPage';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="/thank-you" element={<ThankYou />} />
+          <Route path="/lists" element={<ListsPage />} />
         </Routes>
         <hr />
       </div>

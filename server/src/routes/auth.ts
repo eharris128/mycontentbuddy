@@ -27,7 +27,7 @@ const getOAuthConfig = () => {
   return { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI };
 };
 
-const SCOPES = ['tweet.read', 'users.read', 'tweet.write', 'offline.access'];
+const SCOPES = ['tweet.read', 'users.read', 'tweet.write', 'list.read', 'offline.access'];
 
 // Store PKCE verifier in session (in production, use Redis or database)
 const pkceStore = new Map<string, string>();
@@ -101,6 +101,7 @@ router.get('/callback', async (req, res): Promise<void> => {
       clientId: CLIENT_ID.substring(0, 10) + '...',
       redirectUri: REDIRECT_URI,
       codeLength: (code as string).length,
+      requestedScopes: SCOPES,
     });
     
     // Create client with credentials for token exchange
@@ -120,6 +121,7 @@ router.get('/callback', async (req, res): Promise<void> => {
       hasAccessToken: !!accessToken,
       hasRefreshToken: !!refreshToken,
       tokenLength: accessToken ? accessToken.length : 0,
+      grantedScopes: SCOPES.join(' '),
     });
 
     const token: OAuthToken = {
@@ -462,6 +464,61 @@ router.get('/rate-limits/check/:endpoint', async (req, res): Promise<void> => {
     console.error('Rate limit check error:', error);
     res.status(500).json({
       error: 'Failed to check rate limit',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Lists cache status endpoint
+router.get('/lists/cache/status', async (req, res): Promise<void> => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { TwitterApiWrapper } = await import('../services/twitterApiWrapper');
+    const twitterApi = new TwitterApiWrapper(req.session.oauth_token.access_token);
+    
+    const cacheInfo = await twitterApi.getListsCacheInfo();
+    
+    res.json({
+      cache: cacheInfo,
+      timestamp: new Date().toISOString(),
+      redisConnected: redisService.isRedisConnected()
+    });
+  } catch (error) {
+    console.error('Lists cache status error:', error);
+    res.status(500).json({
+      error: 'Failed to get lists cache status',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Clear lists cache endpoint
+router.post('/lists/cache/clear', async (req, res): Promise<void> => {
+  if (!req.session.oauth_token) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { TwitterApiWrapper } = await import('../services/twitterApiWrapper');
+    const twitterApi = new TwitterApiWrapper(req.session.oauth_token.access_token);
+    
+    const result = await twitterApi.clearListsCache();
+    
+    res.json({
+      message: `Cleared ${result.cleared} lists cache entries`,
+      cleared: result.cleared,
+      keys: result.keys,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Clear lists cache error:', error);
+    res.status(500).json({
+      error: 'Failed to clear lists cache',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }

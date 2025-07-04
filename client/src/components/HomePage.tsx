@@ -57,6 +57,20 @@ const HomePage: React.FC = () => {
           >
             Go to Playground
           </a>
+          <a 
+            href="/lists" 
+            style={{
+              backgroundColor: '#1da1f2',
+              color: 'white',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              textDecoration: 'none',
+              fontSize: '14px',
+              fontWeight: 'bold'
+            }}
+          >
+            View Lists
+          </a>
           <button 
             onClick={logout} 
             style={{ 

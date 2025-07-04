@@ -182,4 +182,38 @@ router.get('/user/by-username/:username', async (req, res): Promise<void> => {
   }
 });
 
+// Get user's owned lists
+router.get('/lists', asyncHandler(async (req, res): Promise<void> => {
+  const userId = req.query.userId as string;
+  const twitterService = TwitterService.fromRequest(req);
+  const lists = await twitterService.getUserLists(userId);
+  res.json(lists);
+}));
+
+// Get lists the user is a member of
+router.get('/lists/memberships', asyncHandler(async (req, res): Promise<void> => {
+  const userId = req.query.userId as string;
+  const twitterService = TwitterService.fromRequest(req);
+  const lists = await twitterService.getUserListMemberships(userId);
+  res.json(lists);
+}));
+
+// Get tweets from a specific list
+router.get('/lists/:listId/tweets', asyncHandler(async (req, res): Promise<void> => {
+  const { listId } = req.params;
+  const maxResults = Math.min(parseInt(req.query.limit as string) || 10, 100);
+  const twitterService = TwitterService.fromRequest(req);
+  const tweets = await twitterService.getListTweets(listId, maxResults);
+  res.json(tweets);
+}));
+
+// Get members of a specific list
+router.get('/lists/:listId/members', asyncHandler(async (req, res): Promise<void> => {
+  const { listId } = req.params;
+  const maxResults = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  const twitterService = TwitterService.fromRequest(req);
+  const members = await twitterService.getListMembers(listId, maxResults);
+  res.json(members);
+}));
+
 export default router;
